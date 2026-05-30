@@ -228,6 +228,8 @@ export const api = {
     }),
   getSessions: (limit = 20, offset = 0) =>
     fetchJSON<PaginatedSessions>(`/api/sessions?limit=${limit}&offset=${offset}`),
+  getSession: (id: string) =>
+    fetchJSON<SessionInfo>(`/api/sessions/${encodeURIComponent(id)}`),
   getSessionMessages: (id: string) =>
     fetchJSON<SessionMessagesResponse>(`/api/sessions/${encodeURIComponent(id)}/messages`),
   getSessionLatestDescendant: (id: string) =>
@@ -370,8 +372,10 @@ export const api = {
   getToolsets: () => fetchJSON<ToolsetInfo[]>("/api/tools/toolsets"),
 
   // Session search (FTS5)
-  searchSessions: (q: string) =>
-    fetchJSON<SessionSearchResponse>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  searchSessions: (q: string, limit = 100) =>
+    fetchJSON<SessionSearchResponse>(
+      `/api/sessions/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
 
   // OAuth provider management
   getOAuthProviders: () =>

@@ -1214,7 +1214,42 @@ Malformed JSON, non-zero exit codes, and timeouts log a warning but never abort 
 
 ### Worked examples
 
-#### 1. Auto-format Python files after every write
+#### 1. Validate 1Password Environments `.env` mounts before shell/code tools
+
+Hermes can run the official [1Password agent-hooks](https://github.com/1Password/agent-hooks) bundle before tool execution. This is useful for projects that use 1Password Environments to mount local `.env` files as FIFOs: the hook blocks the tool call if a required mounted env file is missing, disabled, or not mounted.
+
+Initial setup:
+
+```bash
+# Clone and bundle the upstream hooks once
+git clone https://github.com/1Password/agent-hooks.git
+cd agent-hooks
+./install.sh --agent cursor
+
+# Move the portable bundle where Hermes auto-discovers it.
+# The upstream bundle name is cursor-1password-hooks-bundle; Hermes uses the
+# generic adapter inside the bundle, so the Cursor bundle works here too.
+mkdir -p ~/.hermes
+mv cursor-1password-hooks-bundle ~/.hermes/1password-hooks-bundle
+
+# Enable the bundled Hermes bridge plugin
+hermes plugins enable 1password-agent-hooks
+```
+
+If you keep the bundle somewhere else, set the path explicitly:
+
+```yaml
+# ~/.hermes/config.yaml
+onepassword_agent_hooks:
+  bundle_path: "/absolute/path/to/1password-hooks-bundle"
+  hook_name: "1password-validate-mounted-env-files"
+  target_tools: ["terminal", "execute_code"]
+  timeout: 30
+```
+
+The plugin takes effect in the next Hermes session (or after a gateway restart). It sends the 1Password bundle a generic payload with `command`, `cwd`, and `workspace_roots`, then translates upstream deny results into a Hermes `pre_tool_call` block. If the bundle, 1Password database, `sqlite3`, or the hook itself fails unexpectedly, the upstream hook and Hermes bridge fail open.
+
+#### 2. Auto-format Python files after every write
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -1235,7 +1270,7 @@ printf '{}\n'
 
 The agent's in-context view of the file is **not** re-read automatically — the reformat only affects the file on disk. Subsequent `read_file` calls pick up the formatted version.
 
-#### 2. Block destructive `terminal` commands
+#### 3. Block destructive `terminal` commands
 
 ```yaml
 hooks:
@@ -1257,7 +1292,7 @@ else
 fi
 ```
 
-#### 3. Inject `git status` into every turn (Claude-Code `UserPromptSubmit` equivalent)
+#### 4. Inject `git status` into every turn (Claude-Code `UserPromptSubmit` equivalent)
 
 ```yaml
 hooks:
@@ -1279,7 +1314,7 @@ fi
 
 Claude Code's `UserPromptSubmit` event is intentionally not a separate Hermes event — `pre_llm_call` fires at the same place and already supports context injection. Use it here.
 
-#### 4. Log every subagent completion
+#### 5. Log every subagent completion
 
 ```yaml
 hooks:

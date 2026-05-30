@@ -427,6 +427,31 @@ function SessionRow({
 type SessionsView = "list" | "overview";
 
 const PAGE_SIZE = 20;
+const SEARCH_RESULT_LIMIT = 100;
+
+function sessionFromSearchResult(result: SessionSearchResult): SessionInfo {
+  const started = result.session_started ?? 0;
+  const preview = result.snippet
+    .replace(/>>>|<<</g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return {
+    id: result.session_id,
+    source: result.source,
+    model: result.model,
+    title: null,
+    started_at: started,
+    ended_at: null,
+    last_active: started,
+    is_active: false,
+    message_count: 0,
+    tool_call_count: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    preview,
+  };
+}
 
 function SessionsPagination({
   className,
@@ -486,6 +511,7 @@ export default function SessionsPage() {
   const [searchResults, setSearchResults] = useState<
     SessionSearchResult[] | null
   >(null);
+  const [searchRows, setSearchRows] = useState<SessionInfo[] | null>(null);
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const logScrollRef = useRef<HTMLPreElement | null>(null);
@@ -498,20 +524,25 @@ export default function SessionsPage() {
   const { activeAction, actionStatus, dismissLog } = useSystemActions();
   const resumeInChatEnabled = isDashboardEmbeddedChatEnabled();
 
+  const isSearching = Boolean(search.trim());
+  const displayedCount = isSearching
+    ? (searchResults?.length ?? searchRows?.length ?? 0)
+    : total;
+
   useLayoutEffect(() => {
     if (loading) {
       setAfterTitle(null);
       return;
     }
     setAfterTitle(
-      <Badge tone="secondary" className="text-xs tabular-nums">
-        {total}
+      <Badge tone={isSearching ? "outline" : "secondary"} className="text-xs tabular-nums">
+        {displayedCount}
       </Badge>,
     );
     return () => {
       setAfterTitle(null);
     };
-  }, [loading, setAfterTitle, total]);
+  }, [displayedCount, isSearching, loading, setAfterTitle]);
 
   const loadSessions = useCallback((p: number) => {
     setLoading(true);
@@ -550,26 +581,52 @@ export default function SessionsPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [actionStatus?.lines]);
 
-  // Debounced FTS search
+  // Debounced FTS search. Search returns IDs/snippets; hydrate the matching
+  // sessions so matches outside the currently paginated page still render.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (!search.trim()) {
+    const query = search.trim();
+    if (!query) {
       setSearchResults(null);
+      setSearchRows(null);
       setSearching(false);
       return;
     }
 
+    let cancelled = false;
     setSearching(true);
+    setSearchRows(null);
     debounceRef.current = setTimeout(() => {
       api
-        .searchSessions(search.trim())
-        .then((resp) => setSearchResults(resp.results))
-        .catch(() => setSearchResults(null))
-        .finally(() => setSearching(false));
+        .searchSessions(query, SEARCH_RESULT_LIMIT)
+        .then(async (resp) => {
+          if (cancelled) return;
+          setSearchResults(resp.results);
+          const rows = await Promise.all(
+            resp.results.map(async (result) => {
+              try {
+                return await api.getSession(result.session_id);
+              } catch {
+                return sessionFromSearchResult(result);
+              }
+            }),
+          );
+          if (!cancelled) setSearchRows(rows);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSearchResults(null);
+            setSearchRows(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
     }, 300);
 
     return () => {
+      cancelled = true;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [search]);
@@ -580,6 +637,8 @@ export default function SessionsPage() {
         try {
           await api.deleteSession(id);
           setSessions((prev) => prev.filter((s) => s.id !== id));
+          setSearchRows((prev) => prev?.filter((s) => s.id !== id) ?? null);
+          setSearchResults((prev) => prev?.filter((r) => r.session_id !== id) ?? null);
           setTotal((prev) => prev - 1);
           if (expandedId === id) setExpandedId(null);
           showToast(t.sessions.sessionDeleted, "success");
@@ -597,8 +656,11 @@ export default function SessionsPage() {
     ),
   });
 
+  const displayedSessions = isSearching ? (searchRows ?? []) : sessions;
   const pendingSession = sessionDelete.pendingId
-    ? sessions.find((s) => s.id === sessionDelete.pendingId)
+    ? displayedSessions.find((s) => s.id === sessionDelete.pendingId) ??
+      sessions.find((s) => s.id === sessionDelete.pendingId) ??
+      null
     : null;
 
   // Build snippet map from search results (session_id → snippet)
@@ -609,12 +671,6 @@ export default function SessionsPage() {
     }
   }
 
-  // When searching, filter sessions to those with FTS matches;
-  // when not searching, show all sessions
-  const filtered = searchResults
-    ? sessions.filter((s) => snippetMap.has(s.id))
-    : sessions;
-
   const platformEntries = status
     ? Object.entries(status.gateway_platforms ?? {})
     : [];
@@ -622,7 +678,6 @@ export default function SessionsPage() {
     .filter((s) => !s.is_active)
     .slice(0, 5);
 
-  const isSearching = Boolean(search.trim());
   const showOverviewTab =
     platformEntries.length > 0 || recentSessions.length > 0;
   const showList = view === "list" || isSearching || !showOverviewTab;
@@ -824,7 +879,12 @@ export default function SessionsPage() {
       ) : null}
 
       {showList ? (
-        filtered.length === 0 ? (
+        searching && displayedSessions.length === 0 ? (
+          <div className="flex items-center justify-center py-16 text-muted-foreground">
+            <Spinner className="mr-2 text-base text-primary" />
+            <span className="text-sm font-medium">{t.common.loading}</span>
+          </div>
+        ) : displayedSessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Clock className="h-8 w-8 mb-3 opacity-40" />
             <p className="text-sm font-medium">
@@ -839,7 +899,7 @@ export default function SessionsPage() {
         ) : (
           <>
             <div className="flex min-w-0 flex-col gap-1.5">
-              {filtered.map((s) => (
+              {displayedSessions.map((s) => (
                 <SessionRow
                   key={s.id}
                   session={s}

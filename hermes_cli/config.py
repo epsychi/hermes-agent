@@ -1688,6 +1688,19 @@ DEFAULT_CONFIG = {
     # See `website/docs/user-guide/features/hooks.md` for schema + examples.
     "hooks": {},
 
+    # 1Password agent-hooks bundle integration. Enable the bundled plugin with:
+    # `hermes plugins enable 1password-agent-hooks`. The plugin then runs
+    # bin/run-hook.sh before target tool calls and translates upstream deny
+    # decisions into Hermes pre_tool_call blocks. Empty bundle_path enables
+    # auto-discovery under ~/.hermes/1password-hooks-bundle and project-local
+    # .hermes/1password-hooks-bundle directories.
+    "onepassword_agent_hooks": {
+        "bundle_path": "",
+        "hook_name": "1password-validate-mounted-env-files",
+        "target_tools": ["terminal", "execute_code"],
+        "timeout": 30,
+    },
+
     # Auto-accept shell-hook registrations without a TTY prompt.  Also
     # toggleable per-invocation via --accept-hooks or HERMES_ACCEPT_HOOKS=1.
     # Gateway / cron / non-interactive runs need this (or one of the other

@@ -1,0 +1,6 @@
+name: 1password-agent-hooks
+version: "0.1.0"
+description: "Run the 1Password agent-hooks bundle before Hermes shell/code tool calls to validate mounted 1Password Environments .env files."
+author: "NousResearch"
+hooks:
+  - pre_tool_call

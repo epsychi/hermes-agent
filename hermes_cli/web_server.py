@@ -2508,9 +2508,14 @@ async def get_session_detail(session_id: str):
     db = SessionDB()
     try:
         sid = db.resolve_session_id(session_id)
-        session = db.get_session(sid) if sid else None
+        session = db._get_session_rich_row(sid) if sid else None
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        now = time.time()
+        session["is_active"] = (
+            session.get("ended_at") is None
+            and (now - session.get("last_active", session.get("started_at", 0))) < 300
+        )
         return session
     finally:
         db.close()
