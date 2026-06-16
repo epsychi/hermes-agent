@@ -630,6 +630,7 @@ class TestLaunchdServiceRecovery:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "_verify_launchd_started", lambda target: True)
         monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
 
         gateway_cli.launchd_start()
@@ -658,6 +659,7 @@ class TestLaunchdServiceRecovery:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "_verify_launchd_started", lambda target: True)
         monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
 
         gateway_cli.launchd_start()
@@ -667,6 +669,41 @@ class TestLaunchdServiceRecovery:
             ["launchctl", "bootstrap", domain, str(plist_path)],
             ["launchctl", "kickstart", target],
         ]
+
+    def test_launchd_start_exits_when_job_fails_immediately(self, tmp_path, monkeypatch, capsys):
+        """A successful kickstart can still leave launchd in EX_CONFIG."""
+        import pytest
+
+        plist_path = tmp_path / "ai.hermes.gateway.plist"
+        plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
+        label = gateway_cli.get_launchd_label()
+        target = f"{gateway_cli._launchd_domain()}/{label}"
+
+        def fake_run(cmd, check=False, **kwargs):
+            if cmd == ["launchctl", "print", target]:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=(
+                        f"{target} = {{\n"
+                        "\tstate = spawn scheduled\n"
+                        "\tlast exit code = 78: EX_CONFIG\n"
+                        "}\n"
+                    ),
+                    stderr="",
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(gateway_cli.time, "sleep", lambda _seconds: None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            gateway_cli.launchd_start()
+
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "did not reach running state" in out
+        assert "EX_CONFIG" in out
 
     def test_launchd_restart_drains_running_gateway_before_kickstart(self, monkeypatch):
         calls = []
@@ -837,6 +874,7 @@ class TestLaunchdServiceRecovery:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(gateway_cli, "_verify_launchd_started", lambda target: True)
         monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
 
         gateway_cli.launchd_start()
@@ -2090,6 +2128,23 @@ class TestProfileArg:
         plist_path = gateway_cli.get_launchd_plist_path()
 
         assert plist_path == machine_home / "Library" / "LaunchAgents" / "ai.hermes.gateway-orcha.plist"
+
+    def test_launchd_plist_logs_to_real_user_home_not_hermes_home(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "external" / ".hermes"
+        hermes_home.mkdir(parents=True)
+        machine_home = tmp_path / "machine-home"
+        machine_home.mkdir()
+
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: hermes_home)
+        monkeypatch.setattr(pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(machine_home)))
+
+        plist = gateway_cli.generate_launchd_plist()
+
+        assert f"<string>{machine_home}/Library/Logs/Hermes/ai.hermes.gateway.log</string>" in plist
+        assert f"<string>{machine_home}/Library/Logs/Hermes/ai.hermes.gateway.error.log</string>" in plist
+        assert f"<string>{hermes_home}/logs/gateway.log</string>" not in plist
+        assert f"<string>{hermes_home}/logs/gateway.error.log</string>" not in plist
 
 
 class TestRemapPathForUser:

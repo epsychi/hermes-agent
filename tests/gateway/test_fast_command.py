@@ -121,6 +121,16 @@ def test_turn_route_skips_priority_processing_for_unsupported_models():
     assert route["request_overrides"] == {}
 
 
+def test_load_service_tier_accepts_flex(monkeypatch):
+    monkeypatch.setattr(
+        gateway_run,
+        "_load_gateway_runtime_config",
+        lambda: {"agent": {"service_tier": "flex"}},
+    )
+
+    assert gateway_run.GatewayRunner._load_service_tier() == "flex"
+
+
 @pytest.mark.asyncio
 async def test_handle_fast_command_persists_config(monkeypatch, tmp_path):
     runner = _make_runner()

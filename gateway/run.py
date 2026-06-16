@@ -3584,6 +3584,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         value = raw.lower()
         if not value or value in {"normal", "default", "standard", "off", "none"}:
             return None
+        if value == "flex":
+            return "flex"
         if value in {"fast", "priority", "on"}:
             return "priority"
         logger.warning("Unknown service_tier '%s', ignoring", raw)

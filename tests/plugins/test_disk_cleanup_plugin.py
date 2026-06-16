@@ -465,6 +465,20 @@ class TestPostToolCallHook:
         data = json.loads(tracked_file.read_text())
         assert any(Path(i["path"]) == p.resolve() for i in data)
 
+    def test_terminal_ignores_unstatable_path_candidates(self, _isolate_env):
+        pi = _load_plugin_init()
+        too_long_path = "/tmp/" + ("x" * 300)
+
+        pi._on_post_tool_call(
+            tool_name="terminal",
+            args={"command": "true"},
+            result=f"File name too long: {too_long_path}",
+            task_id="t-too-long", session_id="s-too-long",
+        )
+
+        tracked_file = _isolate_env / "disk-cleanup" / "tracked.json"
+        assert not tracked_file.exists() or tracked_file.read_text().strip() == "[]"
+
     def test_ignores_unrelated_tool(self, _isolate_env):
         pi = _load_plugin_init()
         pi._on_post_tool_call(

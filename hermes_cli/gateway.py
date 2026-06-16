@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -3266,6 +3267,38 @@ def _launchctl_domain_unsupported(returncode: int) -> bool:
     return returncode in _LAUNCHCTL_DOMAIN_UNSUPPORTED_CODES
 
 
+def _verify_launchd_started(target: str) -> bool:
+    """Return False when launchd accepted start but the job immediately failed."""
+    last_output = ""
+    for _ in range(6):
+        try:
+            result = subprocess.run(
+                ["launchctl", "print", target],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return True
+        if result.returncode != 0:
+            time.sleep(0.5)
+            continue
+        output = result.stdout or ""
+        if "state = running" in output:
+            return True
+        last_output = output
+        time.sleep(0.5)
+
+    for line in last_output.splitlines():
+        line = line.strip()
+        if line.startswith("last exit code =") and "(never exited)" not in line and not line.endswith("= 0"):
+            print_error("Gateway service did not reach running state after launchd start.")
+            print(f"  {line}")
+            print("  Run: hermes gateway status")
+            return False
+    return True
+
+
 def _gateway_run_command() -> list[str]:
     """Build the `python -m hermes_cli.main [--profile X] gateway run --replace` argv.
 
@@ -3347,7 +3380,10 @@ def generate_launchd_plist() -> str:
     # to launchd's WorkingDirectory as to systemd's).
     working_dir = _stable_service_working_dir()
     hermes_home = str(get_hermes_home().resolve())
-    log_dir = get_hermes_home() / "logs"
+    # launchd opens stdout/stderr before Python starts. Keep those files under
+    # the real account home so external/noowners HERMES_HOME volumes cannot
+    # fail the job before Hermes logging is initialized.
+    log_dir = _launchd_user_home() / "Library" / "Logs" / "Hermes"
     log_dir.mkdir(parents=True, exist_ok=True)
     label = get_launchd_label()
     profile_arg = _profile_arg(hermes_home)
@@ -3428,10 +3464,10 @@ def generate_launchd_plist() -> str:
     <true/>
     
     <key>StandardOutPath</key>
-    <string>{log_dir}/gateway.log</string>
+    <string>{log_dir}/{label}.log</string>
     
     <key>StandardErrorPath</key>
-    <string>{log_dir}/gateway.error.log</string>
+    <string>{log_dir}/{label}.error.log</string>
 </dict>
 </plist>
 """
@@ -3570,13 +3606,16 @@ def launchd_start():
                 raise
             _launchd_fallback_to_detached(f"launchctl exit {e.returncode}")
             return
+        if not _verify_launchd_started(f"{_launchd_domain()}/{label}"):
+            sys.exit(1)
         print("✓ Service started")
         return
 
     refresh_launchd_plist_if_needed()
+    target = f"{_launchd_domain()}/{label}"
     try:
         subprocess.run(
-            ["launchctl", "kickstart", f"{_launchd_domain()}/{label}"],
+            ["launchctl", "kickstart", target],
             check=True,
             timeout=30,
         )
@@ -3592,7 +3631,7 @@ def launchd_start():
                 timeout=30,
             )
             subprocess.run(
-                ["launchctl", "kickstart", f"{_launchd_domain()}/{label}"],
+                ["launchctl", "kickstart", target],
                 check=True,
                 timeout=30,
             )
@@ -3603,6 +3642,8 @@ def launchd_start():
                 raise
             _launchd_fallback_to_detached(f"launchctl exit {e2.returncode}")
             return
+    if not _verify_launchd_started(target):
+        sys.exit(1)
     print("✓ Service started")
 
 

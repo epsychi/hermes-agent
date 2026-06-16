@@ -1830,6 +1830,8 @@ def _load_service_tier() -> str | None:
     )
     if not raw or raw in {"normal", "default", "standard", "off", "none"}:
         return None
+    if raw == "flex":
+        return "flex"
     if raw in {"fast", "priority", "on"}:
         return "priority"
     return None

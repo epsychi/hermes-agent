@@ -29,6 +29,9 @@ class TestParseServiceTierConfig(unittest.TestCase):
         self.assertEqual(self._parse("fast"), "priority")
         self.assertEqual(self._parse("priority"), "priority")
 
+    def test_flex_passes_through(self):
+        self.assertEqual(self._parse("flex"), "flex")
+
     def test_normal_disables_service_tier(self):
         self.assertIsNone(self._parse("normal"))
         self.assertIsNone(self._parse("off"))

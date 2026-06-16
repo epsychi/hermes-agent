@@ -65,6 +65,42 @@ def test_resolve_stdio_command_falls_back_to_usr_local_bin():
     assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(target)
 
 
+def test_resolve_stdio_command_falls_back_to_homebrew_node_bin():
+    target = os.path.join(os.sep, "opt", "homebrew", "bin", "node")
+
+    def _fake_isfile(path):
+        return path == target
+
+    def _fake_access(path, _mode):
+        return path == target
+
+    with patch("tools.mcp_tool.shutil.which", return_value=None), \
+         patch("tools.mcp_tool.os.path.isfile", side_effect=_fake_isfile), \
+         patch("tools.mcp_tool.os.access", side_effect=_fake_access):
+        command, env = _resolve_stdio_command("node", {"PATH": "/usr/bin:/bin"})
+
+    assert command == target
+    assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(target)
+
+
+def test_resolve_stdio_command_falls_back_to_homebrew_doppler_bin():
+    target = os.path.join(os.sep, "opt", "homebrew", "bin", "doppler")
+
+    def _fake_isfile(path):
+        return path == target
+
+    def _fake_access(path, _mode):
+        return path == target
+
+    with patch("tools.mcp_tool.shutil.which", return_value=None), \
+         patch("tools.mcp_tool.os.path.isfile", side_effect=_fake_isfile), \
+         patch("tools.mcp_tool.os.access", side_effect=_fake_access):
+        command, env = _resolve_stdio_command("doppler", {"PATH": "/usr/bin:/bin"})
+
+    assert command == target
+    assert env["PATH"].split(os.pathsep)[0] == os.path.dirname(target)
+
+
 def test_resolve_stdio_command_respects_explicit_empty_path():
     seen_paths = []
 

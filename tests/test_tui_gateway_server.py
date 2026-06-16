@@ -2392,6 +2392,12 @@ def test_config_set_fast_status_is_non_mutating(monkeypatch):
         server._sessions.pop("sid", None)
 
 
+def test_load_service_tier_accepts_flex(monkeypatch):
+    monkeypatch.setattr(server, "_load_cfg", lambda: {"agent": {"service_tier": "flex"}})
+
+    assert server._load_service_tier() == "flex"
+
+
 def test_config_set_fast_rejects_unsupported_model(monkeypatch):
     writes = []
     agent = types.SimpleNamespace(
