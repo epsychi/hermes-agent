@@ -3486,12 +3486,24 @@ def _launchd_fallback_to_detached(reason: str, *, exit_on_failure: bool = True) 
 
 def generate_launchd_plist() -> str:
     python_path = get_python_path()
-    # Stable cwd anchor — never the volatile source checkout. See
-    # _stable_service_working_dir() for the rationale (same rot risk applies
-    # to launchd's WorkingDirectory as to systemd's).
-    working_dir = _stable_service_working_dir()
+    detected_venv = _detect_venv_dir()
+    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
+    # launchd can refuse to posix_spawn symlinks/binaries on external volumes
+    # (Operation not permitted). Spawn the resolved interpreter while explicitly
+    # providing the repo + venv site-packages on PYTHONPATH so
+    # `python -m hermes_cli.main` still resolves the installed Hermes code.
+    launchd_python_path = str(Path(python_path).resolve())
+    venv_site_packages = next(
+        (str(p) for p in (Path(venv_dir) / "lib").glob("python*/site-packages") if p.exists()),
+        "",
+    )
+    launchd_pythonpath = ":".join(p for p in (str(PROJECT_ROOT), venv_site_packages) if p)
+    # macOS launchd is more restrictive about cwd than systemd, especially when
+    # Hermes lives on an external volume. Use the real user home as the stable
+    # launchd cwd; HERMES_HOME remains explicit in the environment.
+    working_dir = str(_launchd_user_home())
     hermes_home = str(get_hermes_home().resolve())
-    log_dir = get_hermes_home() / "logs"
+    log_dir = _launchd_user_home() / "Library" / "Logs" / "Hermes"
     log_dir.mkdir(parents=True, exist_ok=True)
     label = get_launchd_label()
     profile_arg = _profile_arg(hermes_home)
@@ -3500,8 +3512,6 @@ def generate_launchd_plist() -> str:
     # nvm, cargo, etc.  We prepend venv/bin and node_modules/.bin (matching
     # the systemd unit), then capture the user's full shell PATH so every
     # user-installed tool (node, ffmpeg, …) is reachable.
-    detected_venv = _detect_venv_dir()
-    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
     # Resolve the directory containing the node binary (e.g. Homebrew, nvm)
     # so it's explicitly in PATH even if the user's shell PATH changes later.
     priority_dirs = _build_service_path_dirs()
@@ -3518,7 +3528,7 @@ def generate_launchd_plist() -> str:
 
     # Build ProgramArguments array, including --profile when using a named profile
     prog_args = [
-        f"<string>{python_path}</string>",
+        f"<string>{launchd_python_path}</string>",
         "<string>-m</string>",
         "<string>hermes_cli.main</string>",
     ]
@@ -3555,6 +3565,8 @@ def generate_launchd_plist() -> str:
         <string>{sane_path}</string>
         <key>VIRTUAL_ENV</key>
         <string>{venv_dir}</string>
+        <key>PYTHONPATH</key>
+        <string>{launchd_pythonpath}</string>
         <key>HERMES_HOME</key>
         <string>{hermes_home}</string>
     </dict>

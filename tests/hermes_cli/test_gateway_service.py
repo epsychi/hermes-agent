@@ -3125,17 +3125,40 @@ class TestServiceWorkingDirIsStable:
         # The bug class: never pin cwd inside a transient worktree checkout.
         assert "/.worktrees/" not in value
 
-    def test_launchd_workingdirectory_is_hermes_home(self, tmp_path, monkeypatch):
+    def test_launchd_plist_uses_user_home_cwd_and_explicit_pythonpath(self, tmp_path, monkeypatch):
         import re
 
         home = tmp_path / ".hermes"
+        user_home = tmp_path / "user-home"
+        site_packages = tmp_path / "venv" / "lib" / "python3.11" / "site-packages"
         home.mkdir()
+        user_home.mkdir()
+        site_packages.mkdir(parents=True)
+        python = tmp_path / "venv" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.symlink_to(Path("/usr/bin/python3"))
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: home)
+        monkeypatch.setattr(gateway_cli, "_launchd_user_home", lambda: user_home)
+        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(python))
+        monkeypatch.setattr(gateway_cli, "_detect_venv_dir", lambda: tmp_path / "venv")
         plist = gateway_cli.generate_launchd_plist()
-        m = re.search(r"<key>WorkingDirectory</key>\s*<string>(.*?)</string>", plist)
-        assert m, "plist has no WorkingDirectory entry"
-        assert Path(m.group(1)).resolve() == home.resolve()
-        assert "/.worktrees/" not in m.group(1)
+
+        wd = re.search(r"<key>WorkingDirectory</key>\s*<string>(.*?)</string>", plist)
+        assert wd, "plist has no WorkingDirectory entry"
+        assert Path(wd.group(1)).resolve() == user_home.resolve()
+        assert "/.worktrees/" not in wd.group(1)
+
+        program = re.search(r"<key>ProgramArguments</key>\s*<array>\s*<string>(.*?)</string>", plist)
+        assert program, "plist has no ProgramArguments entry"
+        assert program.group(1) == str(python.resolve())
+
+        pythonpath = re.search(r"<key>PYTHONPATH</key>\s*<string>(.*?)</string>", plist)
+        assert pythonpath, "plist has no PYTHONPATH entry"
+        assert str(gateway_cli.PROJECT_ROOT) in pythonpath.group(1)
+        assert str(site_packages) in pythonpath.group(1)
+
+        assert f"<string>{user_home}/Library/Logs/Hermes/gateway.log</string>" in plist
+        assert f"<string>{user_home}/Library/Logs/Hermes/gateway.error.log</string>" in plist
 
     def test_launchd_plist_keepalive_unconditional(self, tmp_path, monkeypatch):
         """KeepAlive must be unconditional <true/> so the gateway restarts on clean exits.
